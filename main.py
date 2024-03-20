@@ -8,26 +8,26 @@ arp_responses = []
 def check_duplicate_responses(packet):
     for saved_pkt in arp_responses:
         if(saved_pkt.arp.src_hw_mac != packet.arp.src_hw_mac and saved_pkt.arp.src_proto_ipv4 == packet.arp.src_proto_ipv4):
-            print("DUPLICATE ARP RESPONSES DETECTED\n")
-            print("MAC addresses: " + saved_pkt.arp.src_hw_mac + " and " + packet.arp.src_hw_mac + " are both claiming the same IP address: " + packet.arp.src_proto_ipv4)
+            print("\nDUPLICATE ARP RESPONSES DETECTED")
+            print("MAC addresses: " + saved_pkt.arp.src_hw_mac + " and " + packet.arp.src_hw_mac + " are both claiming the same IP address: " + packet.arp.src_proto_ipv4 + "\n")
 
 def process_packet(packet):
     #TODO this is here temporarily for debugging, remove later
     print("ARP Packet: opcode="+packet.arp.opcode+", Sender MAC="+packet.arp.src_hw_mac+", Sender IP="+packet.arp.src_proto_ipv4+", Target MAC="+packet.arp.dst_hw_mac+", Target IP="+packet.arp.dst_proto_ipv4)
 
-    if (packet.arp.opcode == 1):
+    if (str(packet.arp.opcode) == "1"):
 
         #Save the packet
-        if(arp_requests.__len__ >= 100): #Cap at 100 packets TODO: decide if 100 is the right number
+        if(len(arp_requests) >= 100): #Cap at 100 packets TODO: decide if 100 is the right number
             arp_requests.pop(0)
         arp_requests.append(packet)
 
-    elif(packet.arp.opcode == 2):
+    elif(str(packet.arp.opcode) == "2"):
 
         check_duplicate_responses(packet)
 
         #Save the packet
-        if(arp_responses.__len__ >= 100): #Cap at 100 packets TODO: decide if 100 is the right number
+        if(len(arp_responses) >= 100): #Cap at 100 packets TODO: decide if 100 is the right number
             arp_responses.pop(0)
         arp_responses.append(packet)
 

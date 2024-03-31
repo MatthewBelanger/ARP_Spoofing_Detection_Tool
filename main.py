@@ -2,70 +2,96 @@ import pyshark
 import sys
 import os
 from datetime import datetime, timedelta
+from scapy.all import * # Install scapy if not already installed
+from scapy.layers.dot11 import Dot11
+from collections import defaultdict
+import logging
 
-TIME_THRESHOLD = 10 #TODO: Will need to be changed to an appropriate amount of time
+logging.basicConfig(level=logging.INFO) # using a logger instead of print statements; should still print to console but can change to go to a file
+logger = logging.getLogger(__name__)
 
-arp_requests = []
-arp_responses = []
+ip_mac_mapping = defaultdict(list) # key: ip address, value: list of {mac, timestamp}
+
+TIME_THRESHOLD = 10 # May need to change
+
+# If a disassociation frame is detected, the IP address who is being disconnected gets removed from the IP-MAC map
+def remove_disconnected_ip(ip_address):
+    if ip_address in ip_mac_mapping:
+        del ip_mac_mapping[ip_address]
+        logger.info("Removed IP-MAC entry for disconnected IP: %s", ip_address)
+    else:
+        logger.warning("IP address %s not found in IP-MAC mapping", ip_address)
 
 def check_duplicate_responses(packet):
-    for saved_pkt in arp_responses:
-        if(saved_pkt.arp.src_hw_mac != packet.arp.src_hw_mac and saved_pkt.arp.src_proto_ipv4 == packet.arp.src_proto_ipv4):
-            print("\nDUPLICATE ARP RESPONSES DETECTED")
-            print("MAC addresses: " + saved_pkt.arp.src_hw_mac + " and " + packet.arp.src_hw_mac + " are both claiming the same IP address: " + packet.arp.src_proto_ipv4 + "\n")
+    ip_address = packet['ARP'].psrc
+    mac = packet['ARP'].hwsrc
+    timestamp = datetime.now()
+    if len(ip_mac_mapping[ip_address]) > 1: # If an IP has more than 1 IP, check if it is duplicate
+        last_mac, last_time = ip_mac_mapping[ip_address][-2] # get previous MAC
+        if mac != last_mac:
+            logger.warning("Potential ARP Spoofing attempt detected: Duplicate ARP responses for IP %s", ip_address)
             return True
     return False
 
 def check_corresponding_request(packet):
-    if not any(saved_pkt.arp.src_hw_mac == packet.arp.src_hw_mac and saved_pkt.arp.src_proto_ipv4 == packet.arp.src_proto.ipv4 for saved_pkt in arp_responses):
-        #loop through requests to find corresponding request
-        for req_packets in arp_requests:
-            if req_packets.arp.dst_proto_ipv4 == packet.arp.src_proto_ipv4:
-                #check if there is already a response to these requests
-                if any(resp_packet.arp.src_proto_ipv4 == req_packets.arp.dst_proto_ipv4 for resp_packet in arp_responses):
-                    print("An ARP response already exists for the corresponding ARP request for IP: %s", req_packets.arp.dst_proto_ipv4)
-                    return False
-                else:
-                    time_diff = (packet.sniff_time - req_packets.sniff_time).total_seconds()
-                    if time_diff > TIME_THRESHOLD:
-                        print("This ARP response for IP: %s, was sent after an unreasonable amount of time. Warning: Potential ARP Spoofing Attempt!", packet.arp.dst_proto_ipv4)
-                        return False
-                    else:
-                        print("This is a valid response")
-                        return True
-                break
+    ip_address = packet['ARP'].psrc
+    mac = packet['ARP'].hwsrc
+    timestamp = datetime.now()
+
+    for req_packet in ip_mac_mapping[ip_address]:
+        if req_packet[0] == mac:
+            time_diff = (timestamp - req_packet[1]).total_seconds()
+            if time_diff > TIME_THRESHOLD:
+                logger.warning("Potential ARP Spoofing Attempt Detected: ARP response for IP %s senf after an unreasonable amount of time", ip_address)
+                return False
+            else:
+                logger.info("Valid ARP response")
+                return True
         else:
-            print("There is no corresponding ARP request for this response. Warning: Potential ARP Spoofing Attempt!")
+            logger.warning("Potential ARP Spoofing Attempt Detected: No corresponding ARP request for IP %s", ip_address)
             return False
-    return False
+
+def detect_mac_changes():
+    for ip, mac in ip_mac_mapping.items():
+        mac_changes = 0
+        last_timestamp = None
+        for timestamp in mac:
+            if last_timestamp is not None and (timestamp[1] - last_timestamp[-1]).total_seconds() <= TIME_THRESHOLD:
+                mac_changes += 1
+            last_timestamp = timestamp
+        
+        if mac_changes > 1:
+            logger.warning("Potential ARP Spoofing Attempt Detected for IP: %s", ip)
+            logger.warning("IP-MAC changes: ")
+            for i in range(len(mac)-1):
+                logger.warning("%s --> %s (Timestamp: %s)", ip, mac[i][0], mac[i][1])
+                logger.warning("%s --> %s (Timestamp: %s)", ip, mac[i+1][0], mac[i+1][1])
 
 def process_packet(packet):
-    #TODO this is here temporarily for debugging, remove later
-    print("ARP Packet: opcode="+packet.arp.opcode+", Sender MAC="+packet.arp.src_hw_mac+", Sender IP="+packet.arp.src_proto_ipv4+", Target MAC="+packet.arp.dst_hw_mac+", Target IP="+packet.arp.dst_proto_ipv4)
+    if 'ARP' in packet:
+        arp_packet = packet['ARP']
+        ip = arp_packet.psrc
+        mac = arp_packet.hwsrc
+        timestamp = datetime.now()
+        
+        if not check_duplicate_responses(packet):
+            if check_corresponding_request(packet):
+                # Update IP-MAC mapping with the recieved IP and MAC
+                ip_mac_mapping[ip].append((mac, timestamp))
+        
+        detect_mac_changes()
+    elif Dot11 in packet:
+        if packet.type == 0 and packet.subtype == 0: # check if frame is managment frame
+            if packet.subtype in {0x0a, 0x0c}: #check if it is a deauthentication or disassociation frame
+                ip = packet[IP].src
+                remove_disconnected_ip(ip)
 
-    if (str(packet.arp.opcode) == "1"):
-
-        #Save the packet
-        if(len(arp_requests) >= 100): #Cap at 100 packets TODO: decide if 100 is the right number
-            arp_requests.pop(0)
-        arp_requests.append(packet)
-
-    elif(str(packet.arp.opcode) == "2"):
-
-        check_duplicate_responses(packet)
-        check_corresponding_request(packet) 
-        #Maybe put these in an if statement so that invalid responses are not being added to the arp_responses[]
-
-        #Save the packet
-        if(len(arp_responses) >= 100): #Cap at 100 packets TODO: decide if 100 is the right number
-            arp_responses.pop(0)
-        arp_responses.append(packet)
 
 
 def main():
     #Start live capture over internet, only capturing arp packets
     #TODO possibly pass interface in through command line option
-    capture = pyshark.LiveCapture(interface='en0', display_filter="arp")
+    capture = pyshark.LiveCapture(interface='wlan0', display_filter="(arp or wlan.fc.type_subtype == 10)")
     #Apply function on every packet
     capture.apply_on_packets(process_packet)
 
@@ -73,7 +99,7 @@ if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print("\nExiting")
+        logger.info("\nExiting")
         try:
             sys.exit(130)
         except SystemExit:

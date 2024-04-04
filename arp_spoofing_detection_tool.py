@@ -1,14 +1,8 @@
 import pyshark
 import sys
 import os
-from datetime import datetime, timedelta
-from collections import defaultdict
-from scapy.all import * # Install scapy if not already installed
-from scapy.layers.dot11 import Dot11
 
-TIME_THRESHOLD = 10 #TODO: Will need to be changed to an appropriate amount of time
-
-ip_mac_mapping = defaultdict(list) # key: ip address, value: list of {mac, timestamp}
+ip_mac_mapping = {} # key: ip address, value:mac
 
 arp_requests = []
 
@@ -23,7 +17,7 @@ def remove_disconnected_ip(ip_address):
 def check_corresponding_request(packet):
 
     for ip_address in ip_mac_mapping:
-        if (str(packet.arp.src_proto_ipv4) == ip_address):
+        if (str(packet.arp.src_proto_ipv4) == ip_address and str(packet.arp.src_hw_mac) != ip_mac_mapping[ip_address]):
             print("Already a mapping in place for this IP address. Warning: Potential ARP Spoofing Attempt!")
 
     #loop through requests to find corresponding request to this response
@@ -39,9 +33,8 @@ def check_corresponding_request(packet):
 
 def process_packet(packet):
     if 'ARP' in packet:    
-        print(ip_mac_mapping)
         #TODO this is here temporarily for debugging, remove later
-        print("ARP Packet: opcode="+packet.arp.opcode+", Sender MAC="+packet.arp.src_hw_mac+", Sender IP="+packet.arp.src_proto_ipv4+", Target MAC="+packet.arp.dst_hw_mac+", Target IP="+packet.arp.dst_proto_ipv4)
+        #print("ARP Packet: opcode="+packet.arp.opcode+", Sender MAC="+packet.arp.src_hw_mac+", Sender IP="+packet.arp.src_proto_ipv4+", Target MAC="+packet.arp.dst_hw_mac+", Target IP="+packet.arp.dst_proto_ipv4)
 
         if (str(packet.arp.opcode) == "1"):
 
@@ -54,16 +47,16 @@ def process_packet(packet):
             if(check_corresponding_request(packet)):
                 ip = packet.arp.src_proto_ipv4
                 mac = packet.arp.src_hw_mac
-                timestamp = datetime.now()
 
                 # Update IP-MAC mapping with the recieved IP and MAC
-                ip_mac_mapping[ip].append((mac, timestamp))
+                ip_mac_mapping[ip] = mac
             return
         
-    elif Dot11 in packet:
-        if str(packet.type) == "0" and str(packet.subtype) == "0": # check if frame is managment frame
-            if str(packet.subtype) in {"0x0a", "0x0c"}: #check if it is a deauthentication or disassociation frame
-                ip = packet[IP].src
+    if 'wlan' in packet:
+        print("WLAN")
+        if str(packet.wlan.type) == "0":  # check if frame is managment frame
+            if(str(packet.wlan.subtype) == "0x0a"): #check if it is a disassociation frame
+                ip = packet.ip.src
                 remove_disconnected_ip(ip)
         return
 
@@ -71,7 +64,10 @@ def process_packet(packet):
 def main():
     #Start live capture over internet, only capturing arp packets
     #TODO possibly pass interface in through command line option
-    capture = pyshark.LiveCapture(interface='en0', display_filter="(arp or wlan.fc.type_subtype == 10)")
+
+    #capture = pyshark.LiveCapture(interface='en0', display_filter="(arp or wlan.fc.type_subtype == 10)")
+    capture = pyshark.LiveCapture(interface='en0')
+
     #Apply function on every packet
     capture.apply_on_packets(process_packet)
 

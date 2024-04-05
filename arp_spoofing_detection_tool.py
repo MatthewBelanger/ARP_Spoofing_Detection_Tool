@@ -33,9 +33,6 @@ def check_corresponding_request(packet):
 
 def process_packet(packet):
     if 'ARP' in packet:    
-        #TODO this is here temporarily for debugging, remove later
-        #print("ARP Packet: opcode="+packet.arp.opcode+", Sender MAC="+packet.arp.src_hw_mac+", Sender IP="+packet.arp.src_proto_ipv4+", Target MAC="+packet.arp.dst_hw_mac+", Target IP="+packet.arp.dst_proto_ipv4)
-
         if (str(packet.arp.opcode) == "1"):
 
             #Save the packet
@@ -53,7 +50,6 @@ def process_packet(packet):
             return
         
     if 'wlan' in packet:
-        print("WLAN")
         if str(packet.wlan.type) == "0":  # check if frame is managment frame
             if(str(packet.wlan.subtype) == "0x0a"): #check if it is a disassociation frame
                 ip = packet.ip.src
@@ -62,11 +58,9 @@ def process_packet(packet):
 
 
 def main():
-    #Start live capture over internet, only capturing arp packets
+    #Start live capture over WIFI, only capturing arp packets and disassociation frames
     #TODO possibly pass interface in through command line option
-
-    #capture = pyshark.LiveCapture(interface='en0', display_filter="(arp or wlan.fc.type_subtype == 10)")
-    capture = pyshark.LiveCapture(interface='en0')
+    capture = pyshark.LiveCapture(interface='en0', display_filter="(arp or wlan.fc.type_subtype == 10)")
 
     #Apply function on every packet
     capture.apply_on_packets(process_packet)

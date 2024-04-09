@@ -18,16 +18,16 @@ def check_corresponding_request(packet):
 
     for ip_address in ip_mac_mapping:
         if (str(packet.arp.src_proto_ipv4) == ip_address and str(packet.arp.src_hw_mac) != ip_mac_mapping[ip_address]):
-            print("Already a mapping in place for this IP address. Warning: Potential ARP Spoofing Attempt!")
+            print("Already a mapping in place for IP address: " + ip_address + ", Warning: Potential ARP Spoofing Attempt!")
 
     #loop through requests to find corresponding request to this response
     for req_packet in arp_requests:
         if req_packet.arp.dst_proto_ipv4 == packet.arp.src_proto_ipv4:
             arp_requests.remove(req_packet)
-            print("Valid request")
+            print("Valid ARP request and response, Adding IP address: " + packet.arp.src_proto_ipv4 + " to mapping")
             return True
               
-    print("There is no corresponding ARP request for this response. Warning: Potential ARP Spoofing Attempt!")
+    print("There is no corresponding ARP request for the ARP response for IP address: " + packet.arp.src_proto_ipv4 + ", Warning: Potential ARP Spoofing Attempt!")
     return False
 
 
